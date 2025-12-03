@@ -1,8 +1,11 @@
+import ProgressRing from "@/components/progress-ring";
+import QuickAdd from "@/components/quick-add";
 import { useHydrationStore } from "@/store/HydrationStore";
+import { getWeatherByCoords } from "@/utils/weather";
 import { Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient";
 import * as Location from "expo-location";
-import { Redirect } from "expo-router"; // Import Redirect
+import { Redirect, router } from "expo-router";
 import React, { useEffect, useState } from "react";
 import {
   ActivityIndicator,
@@ -13,50 +16,68 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
-// ... (Kode Component ProgressRing tetap sama seperti sebelumnya) ...
-const ProgressRing = ({ percentage }: { percentage: number }) => (
-  <View className="items-center justify-center my-8">
-    <View className="w-64 h-64 rounded-full border-[15px] border-water-secondary items-center justify-center bg-white shadow-lg">
-      <Text className="text-5xl font-bold text-water-primary">
-        {percentage > 100 ? 100 : percentage}%
-      </Text>
-      <Text className="text-gray-400 mt-2 text-lg">Harian Tercapai</Text>
-    </View>
-  </View>
-);
-
 export default function Dashboard() {
-  const {
-    currentIntake,
-    dailyTarget,
-    addWater,
-    setTarget,
-    userData,
-    _hasHydrated,
-  } = useHydrationStore();
+  const { currentIntake, dailyTarget, setTarget, userData, _hasHydrated } =
+    useHydrationStore();
 
-  const [weatherCondition, setWeatherCondition] = useState<string>("Normal");
+  const [weatherCondition, setWeatherCondition] =
+    useState<string>("Memuat Cuaca...");
+  const [temperature, setTemperature] = useState<number | null>(null);
   const [locationName, setLocationName] = useState<string>("Mencari Lokasi...");
-
-  // ---------------------------------------------------------
-  // LOGIKA PERBAIKAN DI SINI
-  // ---------------------------------------------------------
+  const [isHotWeather, setIsHotWeather] = useState(false);
 
   useEffect(() => {
-    (async () => {
+    if (!_hasHydrated) return;
+
+    let mounted = true;
+
+    const fetchWeather = async () => {
       let { status } = await Location.requestForegroundPermissionsAsync();
       if (status !== "granted") {
-        setLocationName("Izin Lokasi Ditolak");
+        if (mounted) {
+          setLocationName("Izin Ditolak");
+          setWeatherCondition("-");
+        }
         return;
       }
-      // Simulasi Logic
-      setLocationName("Palembang");
-      setWeatherCondition("Terik");
-      if (dailyTarget === 2500) setTarget(2800);
-    })();
-  }, []);
 
-  // 1. Jika Data Store belum selesai dimuat dari HP (Loading)
+      let location = await Location.getCurrentPositionAsync({});
+      const { latitude, longitude } = location.coords;
+
+      const result = await getWeatherByCoords(latitude, longitude);
+
+      if (!mounted) return;
+
+      if (result.isSuccess) {
+        setLocationName(result.city);
+        setTemperature(result.temp);
+
+        const formattedCondition = result.condition.replace(/\b\w/g, (l) =>
+          l.toUpperCase()
+        );
+        setWeatherCondition(formattedCondition);
+
+        if (result.temp > 30) {
+          setIsHotWeather(true);
+
+          if (dailyTarget < 3000) {
+            setTarget(dailyTarget + 300);
+          }
+        } else {
+          setIsHotWeather(false);
+        }
+      } else {
+        setWeatherCondition(result.message || "Error");
+      }
+    };
+
+    fetchWeather();
+
+    return () => {
+      mounted = false;
+    };
+  }, [_hasHydrated]);
+
   if (!_hasHydrated) {
     return (
       <View className="flex-1 justify-center items-center bg-water-bg">
@@ -65,63 +86,74 @@ export default function Dashboard() {
     );
   }
 
-  // 2. Jika Data sudah siap, tapi User BELUM Onboarding -> Redirect otomatis
-  if (!userData.hasOnboarded) {
+  if (!userData?.hasOnboarded) {
     return <Redirect href="/onboarding" />;
   }
-
-  // ---------------------------------------------------------
-  // JIKA LOLOS DUA CEK DI ATAS, RENDER DASHBOARD SEPERTI BIASA
-  // ---------------------------------------------------------
 
   const percentage = Math.round((currentIntake / dailyTarget) * 100);
 
   return (
     <SafeAreaView className="flex-1 bg-water-bg">
-      {/* ... (SISA KODE UI DASHBOARD SAMA PERSIS SEPERTI SEBELUMNYA) ... */}
-
       <ScrollView contentContainerStyle={{ paddingBottom: 40 }}>
-        {/* Header */}
+        {/* Header Section */}
         <View className="px-6 pt-4">
           <View className="flex-row justify-between items-center">
             <View>
               <Text className="text-gray-500 font-medium text-base">
-                Halo, User
+                Halo, Syafik
               </Text>
               <Text className="text-2xl font-bold text-gray-800">
                 Stay Hydrated 💧
               </Text>
             </View>
-            <View className="bg-white p-2 rounded-full shadow-sm">
+            <TouchableOpacity
+              className="bg-white p-2 rounded-full shadow-sm"
+              onPress={() => router.push("/settings")}
+            >
               <Ionicons name="settings-outline" size={24} color="#82adfe" />
-            </View>
+            </TouchableOpacity>
           </View>
-          {/* Smart Context Card */}
+
+          {/* Smart Context Card (Weather) */}
           <LinearGradient
-            colors={["#82adfe", "#A9D6E5"]}
+            colors={
+              isHotWeather ? ["#FF9966", "#FF5E62"] : ["#82adfe", "#A9D6E5"]
+            }
             start={{ x: 0, y: 0 }}
             end={{ x: 1, y: 1 }}
             className="mt-6 p-4 rounded-2xl shadow-md"
           >
             <View className="flex-row items-center space-x-3">
               <MaterialCommunityIcons
-                name="weather-sunny"
+                name={
+                  isHotWeather
+                    ? "weather-sunny-alert"
+                    : temperature === null
+                      ? "weather-cloudy-clock" // Icon loading/unknown
+                      : "weather-partly-cloudy"
+                }
                 size={32}
                 color="white"
               />
               <View className="flex-1 ml-3">
                 <Text className="text-white font-bold text-lg">
-                  {locationName}: {weatherCondition}
+                  {locationName}:{" "}
+                  {temperature !== null ? `${temperature}°C` : "..."}
                 </Text>
-                <Text className="text-white opacity-90 text-sm mt-1">
-                  Cuaca panas terdeteksi. Target harian disesuaikan (+300ml).
+                <Text className="text-white font-medium text-base">
+                  {weatherCondition}
+                </Text>
+                <Text className="text-white opacity-90 text-xs mt-1 leading-4">
+                  {isHotWeather
+                    ? "Cuaca panas ekstrem! Target air dinaikkan (+300ml)."
+                    : "Cuaca mendukung. Jaga hidrasi tetap optimal!"}
                 </Text>
               </View>
             </View>
           </LinearGradient>
         </View>
 
-        {/* Progress Ring */}
+        {/* Main Indicator */}
         <ProgressRing percentage={percentage} />
 
         <View className="items-center mb-8">
@@ -133,32 +165,8 @@ export default function Dashboard() {
           </Text>
         </View>
 
-        {/* Quick Add Buttons */}
-        <View className="bg-white rounded-t-[40px] px-6 pt-8 pb-10 shadow-2xl h-full">
-          <Text className="text-lg font-bold text-gray-700 mb-6 text-center">
-            Tambah Minum Cepat
-          </Text>
-          <View className="flex-row justify-between gap-4">
-            <TouchableOpacity
-              onPress={() => addWater(100)}
-              className="flex-1 items-center bg-water-bg p-4 rounded-2xl border border-water-secondary"
-            >
-              <Text className="font-bold text-gray-600">100ml</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              onPress={() => addWater(250)}
-              className="flex-1 items-center bg-water-bg p-4 rounded-2xl border border-water-secondary"
-            >
-              <Text className="font-bold text-gray-600">250ml</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              onPress={() => addWater(500)}
-              className="flex-1 items-center bg-water-bg p-4 rounded-2xl border border-water-secondary"
-            >
-              <Text className="font-bold text-gray-600">500ml</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
+        {/* Quick Add Actions */}
+        <QuickAdd />
       </ScrollView>
     </SafeAreaView>
   );
