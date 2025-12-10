@@ -1,3 +1,4 @@
+import ActivityDetector from "@/components/activity-detector";
 import ProgressRing from "@/components/progress-ring";
 import QuickAdd from "@/components/quick-add";
 import { useHydrationStore } from "@/store/HydrationStore";
@@ -152,6 +153,8 @@ export default function Dashboard() {
             </View>
           </LinearGradient>
         </View>
+
+        <ActivityDetector />
 
         {/* Main Indicator */}
         <ProgressRing percentage={percentage} />

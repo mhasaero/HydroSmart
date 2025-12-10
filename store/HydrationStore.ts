@@ -13,7 +13,9 @@ interface HydrationState {
   currentIntake: number;
   history: { date: string; amount: number }[];
   userData: UserData;
-  _hasHydrated: boolean; // Flag baru untuk status loading storage
+  _hasHydrated: boolean;
+  activityBonusAdded: boolean; // Agar tidak spam bonus
+  addActivityBonus: () => void;
 
   addWater: (amount: number) => void;
   setTarget: (target: number) => void;
@@ -29,7 +31,15 @@ export const useHydrationStore = create<HydrationState>()(
       currentIntake: 0,
       history: [],
       userData: { weight: 0, gender: null, hasOnboarded: false },
-      _hasHydrated: false, // Default false
+      _hasHydrated: false,
+      activityBonusAdded: false,
+
+      addActivityBonus: () => {
+        set((state) => ({
+          dailyTarget: state.dailyTarget + 300, // Selalu tambah 300ml setiap dipanggil
+          // activityBonusAdded: true <-- Hapus atau abaikan ini agar tidak mengunci
+        }));
+      },
 
       addWater: (amount) => {
         const { currentIntake, history } = get();

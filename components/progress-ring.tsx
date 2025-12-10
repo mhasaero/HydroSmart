@@ -3,80 +3,154 @@ import { MaterialCommunityIcons } from "@expo/vector-icons";
 import React, { useEffect, useRef } from "react";
 import { Pressable, Text, Vibration, View } from "react-native";
 import Animated, {
+  Easing,
+  Extrapolation,
+  interpolate,
+  SensorType,
   useAnimatedProps,
+  useAnimatedReaction,
+  useAnimatedSensor,
   useAnimatedStyle,
   useSharedValue,
+  withRepeat,
   withSpring,
   withTiming,
 } from "react-native-reanimated";
-import Svg, { Circle } from "react-native-svg";
+import Svg, {
+  Circle,
+  Defs,
+  LinearGradient,
+  Rect,
+  Stop,
+} from "react-native-svg";
 
-// --- KONFIGURASI UKURAN ---
-const SIZE = 256; // Lebar/Tinggi Box (w-64 = 256px)
+const SIZE = 256;
 const STROKE_WIDTH = 15;
 const RADIUS = (SIZE - STROKE_WIDTH) / 2;
 const CIRCUMFERENCE = 2 * Math.PI * RADIUS;
 
-// Komponen Animated Circle agar bisa digerakkan reanimated
+const CONTAINER_SIZE = SIZE * 2.5;
+const WATER_SIZE = CONTAINER_SIZE;
+
+// Component Animated untuk SVG
 const AnimatedCircle = Animated.createAnimatedComponent(Circle);
+const AnimatedBubble = Animated.createAnimatedComponent(Circle);
+
+// --- KOMPONEN BUBBLE SEDERHANA (FIX) ---
+const Bubble = ({
+  x,
+  size,
+  speed,
+}: {
+  x: number;
+  size: number;
+  speed: number;
+}) => {
+  // Kita animasikan 'cy' (posisi Y) secara langsung
+  // Mulai dari bawah (WATER_SIZE) bergerak ke atas (0)
+  const cyValue = useSharedValue(WATER_SIZE);
+
+  useEffect(() => {
+    cyValue.value = withRepeat(
+      withTiming(0, {
+        duration: speed,
+        easing: Easing.linear,
+      }),
+      -1, // Loop selamanya
+      false // Jangan reverse (biar selalu naik dari bawah)
+    );
+  }, []);
+
+  const animatedProps = useAnimatedProps(() => ({
+    cy: cyValue.value,
+  }));
+
+  return (
+    <AnimatedBubble
+      cx={x}
+      r={size}
+      fill="rgba(255, 255, 255, 0.6)" // Putih agak transparan
+      animatedProps={animatedProps}
+    />
+  );
+};
 
 const ProgressRing = ({ percentage }: { percentage: number }) => {
   const { addWater } = useHydrationStore();
-  // State untuk animasi
   const progress = useSharedValue(0);
   const scale = useSharedValue(1);
-  const waveHeight = useSharedValue(0);
+  const rotation = useSharedValue(0);
   const intervalRef = useRef<number | null>(null);
 
-  // Batasi persentase visual maks 100%
+  const sensor = useAnimatedSensor(SensorType.GRAVITY, {
+    interval: 20,
+    adjustToInterfaceOrientation: true,
+  });
+
   const clampedPercentage = Math.min(percentage, 100);
 
-  // Update animasi saat percentage berubah dari luar
   useEffect(() => {
     progress.value = withTiming(clampedPercentage / 100, { duration: 1000 });
-    waveHeight.value = withSpring(clampedPercentage, { damping: 20 });
   }, [clampedPercentage]);
 
-  // Animasi Properti SVG (Lingkaran Biru)
+  // LOGIC GYRO (Sesuai settingan kamu: Minus dan -x)
+  useAnimatedReaction(
+    () => sensor.sensor.value,
+    (currentSensor) => {
+      const { x, y } = currentSensor;
+      if (Math.abs(x) < 0.1 && Math.abs(y) < 0.1) return;
+
+      const targetAngle = Math.atan2(y, -x) - Math.PI / 2;
+      let delta = targetAngle - rotation.value;
+      while (delta > Math.PI) delta -= 2 * Math.PI;
+      while (delta < -Math.PI) delta += 2 * Math.PI;
+
+      rotation.value = withSpring(rotation.value + delta, {
+        damping: 50,
+        stiffness: 100,
+      });
+    }
+  );
+
   const animatedCircleProps = useAnimatedProps(() => {
-    const strokeDashoffset = CIRCUMFERENCE * (1 - progress.value);
+    return { strokeDashoffset: CIRCUMFERENCE * (1 - progress.value) };
+  });
+
+  // LOGIC NAIK TURUN (Sesuai settingan kamu: Interpolate Negatif)
+  const containerStyle = useAnimatedStyle(() => {
+    const offsetEmpty = 428;
+    const offsetFull = 172;
+
+    const translateY = interpolate(
+      progress.value,
+      [0, 1],
+      [-offsetEmpty, -offsetFull],
+      Extrapolation.CLAMP
+    );
+
     return {
-      strokeDashoffset,
+      transform: [
+        { rotate: `${rotation.value}rad` },
+        { translateY: translateY },
+      ],
     };
   });
 
-  // Animasi Tinggi Air (Isi dalam lingkaran)
-  const animatedWaterStyle = useAnimatedStyle(() => {
-    return {
-      height: `${waveHeight.value}%`,
-    };
-  });
+  const pressStyle = useAnimatedStyle(() => ({
+    transform: [{ scale: scale.value }],
+  }));
 
-  // Animasi Scale saat ditekan
-  const animatedContainerStyle = useAnimatedStyle(() => {
-    return {
-      transform: [{ scale: scale.value }],
-    };
-  });
-
-  // --- LOGIKA HOLD TO ADD ---
   const handlePressIn = () => {
-    // Efek visual ditekan
     scale.value = withSpring(0.95);
-    Vibration.vibrate(50); // Haptic feedback awal
-
-    // Mulai loop penambahan air
+    Vibration.vibrate(50);
     intervalRef.current = setInterval(() => {
-      addWater(10); // Tambah 10ml setiap 100ms
-      Vibration.vibrate(10); // Haptic halus saat mengisi
+      addWater(10);
+      Vibration.vibrate(10);
     }, 100);
   };
 
   const handlePressOut = () => {
-    // Kembalikan ukuran
     scale.value = withSpring(1);
-
-    // Hentikan penambahan
     if (intervalRef.current) {
       clearInterval(intervalRef.current);
       intervalRef.current = null;
@@ -91,53 +165,90 @@ const ProgressRing = ({ percentage }: { percentage: number }) => {
         delayLongPress={200}
       >
         <Animated.View
-          style={[{ width: SIZE, height: SIZE }, animatedContainerStyle]}
-          className="items-center justify-center bg-white rounded-full shadow-lg overflow-hidden relative"
+          style={[{ width: SIZE, height: SIZE }, pressStyle]}
+          className="items-center justify-center bg-white rounded-full shadow-lg overflow-hidden relative bg-slate-50"
         >
-          {/* 1. LAYER AIR (WAVE FILL) - Di dalam lingkaran */}
-          <View className="absolute bottom-0 w-full h-full justify-end">
-            {/* Background air transparan */}
-            <Animated.View
-              style={[animatedWaterStyle]}
-              className="w-full bg-water-primary/20"
+          {/* CONTAINER AIR */}
+          <Animated.View
+            style={[
+              {
+                position: "absolute",
+                width: CONTAINER_SIZE,
+                height: CONTAINER_SIZE,
+                top: -((CONTAINER_SIZE - SIZE) / 2),
+                left: -((CONTAINER_SIZE - SIZE) / 2),
+              },
+              containerStyle,
+            ]}
+          >
+            <Svg width={WATER_SIZE} height={WATER_SIZE}>
+              {/* 1. GRADIENT - SAYA BALIK POSISINYA (FIX) */}
+              <Defs>
+                <LinearGradient id="freshWater" x1="0" y1="0" x2="0" y2="1">
+                  {/* Posisi 0 (Atas) sekarang Biru Pekat */}
+                  <Stop offset="0" stopColor="#0ea5e9" stopOpacity="1" />
+                  {/* Posisi 1 (Bawah) sekarang Biru Terang */}
+                  <Stop offset="1" stopColor="#bae6fd" stopOpacity="0.8" />
+                </LinearGradient>
+              </Defs>
+
+              {/* 2. AIR FILL */}
+              <Rect
+                x="0"
+                y="0"
+                width={WATER_SIZE}
+                height={WATER_SIZE}
+                fill="url(#freshWater)"
+              />
+
+              {/* 3. BUBBLES (Size & Speed Random) */}
+              {/* Saya tambahkan lebih banyak dan variasi posisi X */}
+              <Bubble x={WATER_SIZE * 0.15} size={8} speed={3000} />
+              <Bubble x={WATER_SIZE * 0.35} size={5} speed={4500} />
+              <Bubble x={WATER_SIZE * 0.5} size={9} speed={2500} />
+              <Bubble x={WATER_SIZE * 0.65} size={6} speed={3800} />
+              <Bubble x={WATER_SIZE * 0.85} size={7} speed={3200} />
+            </Svg>
+          </Animated.View>
+
+          {/* GLOSS EFFECT (KILAU KACA) */}
+          <View className="absolute top-4 right-8 w-16 h-8 bg-white opacity-20 rounded-full rotate-45 pointer-events-none" />
+          <View className="absolute bottom-4 left-8 w-4 h-4 bg-white opacity-10 rounded-full pointer-events-none" />
+
+          {/* LAYER TEXT & RING */}
+          <View className="absolute items-center z-10 pointer-events-none">
+            <Text className="text-5xl font-bold text-water-primary shadow-sm">
+              {percentage > 100 ? 100 : percentage}%
+            </Text>
+            <Text className="text-gray-500 mt-2 text-lg font-medium">
+              Harian
+            </Text>
+            <MaterialCommunityIcons
+              name="gesture-tap-hold"
+              size={24}
+              color="#82adfe"
+              style={{ marginTop: 8, opacity: 0.6 }}
             />
           </View>
 
-          {/* 2. LAYER TEXT & ICON */}
-          <View className="absolute items-center z-10">
-            <Text className="text-5xl font-bold text-water-primary">
-              {percentage > 100 ? 100 : percentage}%
-            </Text>
-            <Text className="text-gray-400 mt-2 text-lg">Harian Tercapai</Text>
-            <View className="mt-2 opacity-50">
-              <MaterialCommunityIcons
-                name="gesture-tap-hold"
-                size={24}
-                color="#82adfe"
-              />
-            </View>
-            <Text className="text-water-secondary text-[10px]">
-              Tahan untuk isi
-            </Text>
-          </View>
-
-          {/* 3. LAYER SVG RING (BORDER) */}
-          <Svg width={SIZE} height={SIZE} className="absolute rotate-[-90deg]">
-            {/* Background Ring (Abu-abu) */}
+          <Svg
+            width={SIZE}
+            height={SIZE}
+            className="absolute rotate-[-90deg] z-20 pointer-events-none"
+          >
             <Circle
               cx={SIZE / 2}
               cy={SIZE / 2}
               r={RADIUS}
-              stroke="#E5E7EB" // gray-200
+              stroke="#E5E7EB"
               strokeWidth={STROKE_WIDTH}
               fill="transparent"
             />
-            {/* Foreground Ring (Biru - Animasi) */}
             <AnimatedCircle
               cx={SIZE / 2}
               cy={SIZE / 2}
               r={RADIUS}
-              stroke="#82adfe" // water-primary
+              stroke="#82adfe"
               strokeWidth={STROKE_WIDTH}
               fill="transparent"
               strokeDasharray={CIRCUMFERENCE}
