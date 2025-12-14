@@ -3,6 +3,7 @@ import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 
 interface UserData {
+  name: string;
   weight: number;
   gender: "male" | "female" | null;
   hasOnboarded: boolean;
@@ -30,7 +31,7 @@ export const useHydrationStore = create<HydrationState>()(
       dailyTarget: 2500,
       currentIntake: 0,
       history: [],
-      userData: { weight: 0, gender: null, hasOnboarded: false },
+      userData: { name: "", weight: 0, gender: null, hasOnboarded: false },
       _hasHydrated: false,
       activityBonusAdded: false,
 
