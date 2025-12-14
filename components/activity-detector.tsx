@@ -4,91 +4,100 @@ import { Accelerometer } from "expo-sensors";
 import React, { useEffect, useState } from "react";
 import { Alert, Text, View } from "react-native";
 import Animated, {
+  runOnJS,
   useAnimatedStyle,
   useSharedValue,
   withSpring,
   withTiming,
 } from "react-native-reanimated";
 
-const THRESHOLD = 1.2;
+// Ganti Text biasa dengan Animated.Text agar bisa baca value tanpa re-render
+// (Kita gunakan trik TextInput editable=false nanti atau simplifikasi update text)
+// Untuk simplifikasi, kita update text Points hanya setiap 5 poin agar ringan.
+
 const GOAL_POINTS = 100;
 
 export default function ActivityDetector() {
   const { addActivityBonus } = useHydrationStore();
 
-  const [intensity, setIntensity] = useState(0);
-  const [points, setPoints] = useState(0);
-  const [isCooldown, setIsCooldown] = useState(false); // State untuk jeda reset
+  // State React (Hanya untuk UI statis / status akhir)
+  const [isCooldown, setIsCooldown] = useState(false);
+  const [displayPoints, setDisplayPoints] = useState(0); // Update ini dibatasi (Throttled)
 
+  // State Reanimated (Langsung di UI Thread - Sangat Cepat)
+  const pointsSV = useSharedValue(0);
   const barWidth = useSharedValue(0);
 
   useEffect(() => {
-    Accelerometer.setUpdateInterval(100);
+    // 1. Perlambat sedikit interval sensor (200ms = 5x sedetik cukup untuk deteksi lari)
+    // Sebelumnya 100ms terlalu agresif
+    Accelerometer.setUpdateInterval(200);
 
     const subscription = Accelerometer.addListener(({ x, y, z }) => {
-      // Jika sedang Cooldown (istirahat setelah sukses), abaikan sensor
       if (isCooldown) return;
 
+      // Hitung Guncangan
       const totalForce = Math.sqrt(x * x + y * y + z * z);
       const movement = Math.abs(totalForce - 1);
 
-      setIntensity(movement);
-
+      // LOGIKA DI UI THREAD (Tanpa membebani React)
       if (movement > 0.5) {
-        setPoints((prev) => {
-          const newPoints = prev + 1;
+        const newPoints = pointsSV.value + 2; // +2 karena interval lebih lambat
+        pointsSV.value = newPoints;
 
-          // Update animasi bar
-          barWidth.value = withSpring((newPoints / GOAL_POINTS) * 100);
-
-          // TRIGGER SUKSES
-          if (newPoints >= GOAL_POINTS) {
-            handleSuccess(); // Panggil fungsi reset
-            return GOAL_POINTS; // Mentok di 100 dulu
-          }
-          return newPoints;
-        });
-      } else {
-        // Decay (Turun pelan-pelan kalau diam)
-        setPoints((prev) => Math.max(0, prev - 0.5));
-        barWidth.value = withTiming(
-          (Math.max(0, points - 0.5) / GOAL_POINTS) * 100
+        // Update animasi bar langsung (Tanpa re-render React)
+        barWidth.value = withSpring(
+          (Math.min(newPoints, GOAL_POINTS) / GOAL_POINTS) * 100
         );
+
+        // Update Text di layar (Hanya update React State jika kelipatan 5 atau selesai)
+        // Ini kuncinya agar tidak berat!
+        if (Math.floor(newPoints) % 5 === 0 || newPoints >= GOAL_POINTS) {
+          runOnJS(updateDisplayPoints)(newPoints);
+        }
+
+        // Cek Sukses
+        if (newPoints >= GOAL_POINTS) {
+          runOnJS(triggerSuccess)();
+        }
+      } else {
+        // Decay (Turun pelan)
+        if (pointsSV.value > 0) {
+          pointsSV.value = Math.max(0, pointsSV.value - 0.5);
+          barWidth.value = withTiming((pointsSV.value / GOAL_POINTS) * 100);
+
+          // Sinkronisasi tampilan teks sesekali saat turun
+          if (Math.floor(pointsSV.value) % 10 === 0) {
+            runOnJS(updateDisplayPoints)(pointsSV.value);
+          }
+        }
       }
     });
 
     return () => subscription && subscription.remove();
-  }, [isCooldown, points]); // Tambahkan isCooldown ke dependency
+  }, [isCooldown]);
 
-  const handleSuccess = () => {
-    // 1. Matikan sensor sementara
+  // Wrapper untuk update state React (Dipanggil via runOnJS)
+  const updateDisplayPoints = (val: number) => {
+    setDisplayPoints(Math.min(Math.floor(val), GOAL_POINTS));
+  };
+
+  const triggerSuccess = () => {
     setIsCooldown(true);
-    setIntensity(0);
-
-    // 2. Tambah Bonus Air
     addActivityBonus();
 
-    // 3. Beri Notifikasi (Optional: Bisa ganti Toast biar ga ganggu)
-    Alert.alert(
-      "🏃‍♂️ Aktivitas Selesai!",
-      "Target aktivitas tercapai. +300ml ditambahkan. Sensor akan di-reset dalam 3 detik.",
-      [{ text: "Oke" }]
-    );
+    Alert.alert("🏃‍♂️ Target Tercapai!", "+300ml ditambahkan!");
 
-    // 4. Reset Otomatis setelah 3 detik
     setTimeout(() => {
-      // Reset Value
-      setPoints(0);
-      barWidth.value = withTiming(0, { duration: 1000 }); // Animasi mundur bar ke 0
-
-      // Nyalakan sensor lagi
+      pointsSV.value = 0;
+      barWidth.value = withTiming(0);
+      setDisplayPoints(0);
       setIsCooldown(false);
     }, 3000);
   };
 
   const animatedBarStyle = useAnimatedStyle(() => ({
     width: `${barWidth.value}%`,
-    // Ubah warna bar jadi Hijau saat cooldown (sukses), Orange saat proses
     backgroundColor: isCooldown ? "#22c55e" : "#f97316",
   }));
 
@@ -96,42 +105,28 @@ export default function ActivityDetector() {
     <View className="mx-6 mt-4 p-4 bg-white rounded-2xl shadow-sm border border-gray-100">
       <View className="flex-row justify-between items-center mb-2">
         <View className="flex-row items-center space-x-2">
-          {/* Ganti Icon saat Cooldown */}
           <MaterialCommunityIcons
             name={isCooldown ? "check-circle" : "run-fast"}
             size={20}
-            color={
-              isCooldown ? "#22c55e" : intensity > 0.5 ? "#ef4444" : "#94a3b8"
-            }
+            color={isCooldown ? "#22c55e" : "#ef4444"}
           />
           <Text className="text-gray-600 font-medium">
             {isCooldown ? "Target Tercapai!" : "Deteksi Aktivitas"}
           </Text>
         </View>
         <Text className="text-xs text-gray-400">
-          {/* Tampilkan teks Reset saat cooldown */}
           {isCooldown
             ? "Resetting..."
-            : `${Math.round(points)} / ${GOAL_POINTS} Pts`}
+            : `${displayPoints} / ${GOAL_POINTS} Pts`}
         </Text>
       </View>
 
-      {/* Progress Bar Container */}
       <View className="h-3 bg-gray-100 rounded-full overflow-hidden w-full">
-        {/* Animated Fill */}
         <Animated.View
           className="h-full rounded-full"
           style={animatedBarStyle}
         />
       </View>
-
-      <Text className="text-[10px] text-gray-400 mt-2 text-center">
-        {isCooldown
-          ? "Istirahat sejenak sebelum mendeteksi lagi..."
-          : intensity > 0.5
-            ? "🔥 Sedang mendeteksi gerakan intens..."
-            : "Bergeraklah untuk meningkatkan target air."}
-      </Text>
     </View>
   );
 }
