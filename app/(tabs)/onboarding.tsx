@@ -18,14 +18,15 @@ export default function OnboardingScreen() {
   const router = useRouter();
   const { setUserData, calculateTarget, setTarget } = useHydrationStore();
 
+  const [name, setName] = useState("");
   const [weight, setWeight] = useState("");
   const [gender, setGender] = useState<"male" | "female" | null>(null);
 
   const handleFinish = () => {
-    if (!weight || !gender) {
+    if (!name.trim() || !weight || !gender) {
       Alert.alert(
         "Data Belum Lengkap",
-        "Mohon isi berat badan dan pilih jenis kelamin Anda."
+        "Mohon isi nama, berat badan dan pilih jenis kelamin Anda."
       );
       return;
     }
@@ -38,6 +39,7 @@ export default function OnboardingScreen() {
     // 2. Simpan ke Store
     setTarget(calculatedTarget);
     setUserData({
+      name: name,
       weight: weightNum,
       gender: gender,
       hasOnboarded: true,
@@ -73,9 +75,24 @@ export default function OnboardingScreen() {
               Personalisasi
             </Text>
             <Text className="text-gray-500 text-center mt-2 px-4">
-              Bantu kami menghitung kebutuhan air harian yang tepat untuk
-              tubuhmu.
+              Halo! Mari berkenalan dulu sebelum mulai hidup sehat.
             </Text>
+          </View>
+
+          {/* --- BARU: Input Nama --- */}
+          <View className="mb-6">
+            <Text className="text-gray-700 font-bold mb-3 ml-1">
+              Nama Panggilan
+            </Text>
+            <View className="flex-row items-center bg-gray-50 border border-gray-200 rounded-xl px-4 py-3">
+              <Ionicons name="person-outline" size={24} color="#82adfe" />
+              <TextInput
+                className="flex-1 ml-3 text-lg font-bold text-gray-800"
+                placeholder="Contoh: Syafik"
+                value={name}
+                onChangeText={setName}
+              />
+            </View>
           </View>
 
           {/* Input Berat Badan */}

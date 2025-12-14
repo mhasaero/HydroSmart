@@ -101,7 +101,8 @@ export default function Dashboard() {
           <View className="flex-row justify-between items-center">
             <View>
               <Text className="text-gray-500 font-medium text-base">
-                Halo, Syafik
+                {/* GANTI BAGIAN INI: */}
+                Halo, {userData?.name || "User"}
               </Text>
               <Text className="text-2xl font-bold text-gray-800">
                 Stay Hydrated 💧
